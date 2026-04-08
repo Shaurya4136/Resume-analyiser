@@ -10,16 +10,44 @@ dotenv.config();
 
 const app = express();
 
+// ---------------- MIDDLEWARE ----------------
 app.use(cors());
-app.use(express.json());
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log(err));
+// ⚠️ Important for file uploads (PDFs)
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// ---------------- ROUTES ----------------
 app.use("/api", uploadRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
-app.listen(process.env.PORT, () => {
-  console.log(`🚀 Server running on ${process.env.PORT}`);
+// ---------------- HEALTH CHECK ----------------
+app.get("/", (req, res) => {
+  res.send("🚀 Resume Analyzer API Running");
 });
+
+// ---------------- ERROR HANDLER ----------------
+app.use((err, req, res, next) => {
+  console.error("❌ Global Error:", err.stack);
+  res.status(500).json({
+    success: false,
+    message: err.message || "Internal Server Error",
+  });
+});
+
+// ---------------- DB + SERVER START ----------------
+const PORT = process.env.PORT || 5000;
+
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => {
+    console.log("✅ MongoDB Connected");
+
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB connection failed:", err.message);
+    process.exit(1);
+  });
