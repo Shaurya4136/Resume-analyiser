@@ -3,7 +3,8 @@ node_modules/
 *.log
 *.xlsx
 *.pdf
-/credentials.json
+credentials.json
+
 uploads/
 dist/
 build/
