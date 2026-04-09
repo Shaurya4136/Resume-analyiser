@@ -1,8 +1,6 @@
-fastapi
-uvicorn
-pymupdf
-python-multipart
+fastapi==0.110.0
+uvicorn==0.29.0
+pymupdf==1.24.1
+python-multipart==0.0.9
 
 spacy==3.7.2
-thinc==8.2.2
-blis==0.7.11
