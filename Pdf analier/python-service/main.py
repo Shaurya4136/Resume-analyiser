@@ -3,14 +3,10 @@ import re
 import fitz
 import spacy
 
-
 app = FastAPI()
-try:
-    nlp = spacy.load("en_core_web_sm")
-except:
-    import os
-    os.system("python -m spacy download en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
+
+# ---------------- LOAD SPACY (OPTIMIZED) ----------------
+nlp = spacy.load("en_core_web_sm", disable=["parser", "tagger"])
 
 # ---------------- TEXT EXTRACTION ----------------
 def extract_text(file_bytes):
@@ -36,31 +32,31 @@ def split_sections(text):
 
     return {k: "\n".join(v) for k, v in sections.items()}
 
-# ---------------- NAME ----------------
+# ---------------- NAME (IMPROVED) ----------------
 def extract_name(text):
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-    if not lines:
-        return None
 
-    first = lines[0]
+    blacklist = ["resume", "cv", "profile", "biodata"]
 
-    if len(first.split()) <= 4 and not any(c.isdigit() for c in first):
-        return first.strip().title()
+    for line in lines[:5]:
+        if (
+            2 <= len(line.split()) <= 4 and
+            not any(char.isdigit() for char in line) and
+            not any(b in line.lower() for b in blacklist)
+        ):
+            return line.title()
 
     doc = nlp(text[:500])
     for ent in doc.ents:
-        if ent.label_ == "PERSON":
+        if ent.label_ == "PERSON" and len(ent.text.split()) <= 4:
             return ent.text.strip()
 
-    return None
+    return "N/A"
 
-# ---------------- EMAIL (FIXED) ----------------
+# ---------------- EMAIL ----------------
 def extract_email(text):
-
-    # 🔥 Fix broken emails
     text = re.sub(r"\s*@\s*", "@", text)
     text = re.sub(r"\s*\.\s*", ".", text)
-
     text = text.replace("\n", " ").replace("\t", " ")
 
     emails = re.findall(
@@ -79,31 +75,24 @@ def extract_email(text):
 
     return clean_emails[0]
 
-# ---------------- PHONE (FIXED 🔥) ----------------
+# ---------------- PHONE ----------------
 def extract_phone(text):
     match = re.search(r"(\+?\d[\d\s\-]{8,15})", text)
 
     if not match:
         return None
 
-    phone = match.group(0)
+    phone = re.sub(r"\D", "", match.group(0))
 
-    # 🔥 Normalize phone
-    phone = re.sub(r"\D", "", phone)
-
-    # Remove country code (India)
     if phone.startswith("91") and len(phone) > 10:
         phone = phone[-10:]
 
     return phone
 
 # ---------------- LOCATION ----------------
-# ---------------- LOCATION (INDIA FIXED 🔥) ----------------
 def extract_location(text):
-
     text_lower = text.lower()
 
-    # ✅ Top Indian cities (can expand later)
     indian_cities = [
         "delhi","new delhi","mumbai","pune","bangalore","bengaluru",
         "hyderabad","chennai","kolkata","ahmedabad","jaipur","lucknow",
@@ -113,23 +102,17 @@ def extract_location(text):
         "visakhapatnam","madurai","varanasi","meerut","ranchi"
     ]
 
-    # 🔥 STEP 1: Direct match (BEST)
     for city in indian_cities:
         if city in text_lower:
             return city.title()
 
-    # 🔥 STEP 2: PINCODE detection (India specific)
     pincode_match = re.search(r"\b\d{6}\b", text)
     if pincode_match:
         return "India"
 
-    # 🔥 STEP 3: spaCy fallback (filtered)
     doc = nlp(text[:1000])
 
-    blacklist = [
-        "node", "react", "express", "mongodb",
-        "developer", "engineer", "javascript"
-    ]
+    blacklist = ["node", "react", "express", "mongodb", "developer"]
 
     for ent in doc.ents:
         if ent.label_ in ["GPE", "LOC"]:
@@ -138,40 +121,13 @@ def extract_location(text):
             if any(b in val for b in blacklist):
                 continue
 
-            if ".js" in val:
-                continue
-
             if len(val) < 3:
                 continue
 
-            # ✅ Prefer Indian-like words only
             if val.isalpha():
                 return ent.text.strip()
 
     return "N/A"
-    doc = nlp(text[:1000])
-
-    blacklist = [
-        "node", "react", "express", "mongodb",
-        "developer", "engineer", "javascript"
-    ]
-
-    for ent in doc.ents:
-        if ent.label_ in ["GPE", "LOC"]:
-            val = ent.text.strip().lower()
-
-            if any(b in val for b in blacklist):
-                continue
-
-            if ".js" in val:
-                continue
-
-            if len(val) < 3:
-                continue
-
-            return ent.text.strip()
-
-    return None
 
 # ---------------- SKILLS ----------------
 def extract_skills(text):
@@ -185,7 +141,7 @@ def extract_skills(text):
 
     return list(set([w for w in words if w in common_skills]))
 
-# ---------------- COMPANY ----------------
+# ---------------- COMPANY (IMPROVED) ----------------
 def extract_company(exp_text):
     lines = [l.strip() for l in exp_text.split("\n") if l.strip()]
 
@@ -195,35 +151,33 @@ def extract_company(exp_text):
         if any(x in lower for x in ["experience", "work", "employment"]):
             continue
 
-        if re.search(r"\d{4}", line):
-            continue
+        match = re.search(r"(?:at|@)\s+([A-Za-z0-9 &.,]+)", line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
 
-        if any(month in lower for month in [
-            "jan","feb","mar","apr","may","jun",
-            "jul","aug","sep","oct","nov","dec"
+        if any(suffix in lower for suffix in [
+            "pvt", "ltd", "limited", "inc", "technologies", "solutions"
         ]):
+            return line.strip()
+
+        if re.search(r"\d{4}", line):
             continue
 
         if len(line.split()) > 6:
             continue
 
-        if line.startswith("-") or line.startswith("•"):
+        if line.startswith(("•", "-", "*")):
             continue
 
-        match = re.search(r"at\s+(.+)", line, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-
-        if any(c.isupper() for c in line):
+        if line.isupper() and 2 <= len(line.split()) <= 5:
             return line.strip()
 
-    return None
+    return "N/A"
 
 # ---------------- CLEAN OUTPUT ----------------
 def clean_output(data):
-
     if data["location"]:
-        if any(x in data["location"].lower() for x in ["node", "react", "express", "js"]):
+        if any(x in data["location"].lower() for x in ["node", "react", "js"]):
             data["location"] = "N/A"
 
     if data["lastCompany"]:
@@ -232,23 +186,33 @@ def clean_output(data):
         if re.search(r"\d{4}", lower):
             data["lastCompany"] = "N/A"
 
-        if any(month in lower for month in [
-            "jan","feb","mar","apr","may","jun",
-            "jul","aug","sep","oct","nov","dec"
-        ]):
-            data["lastCompany"] = "N/A"
+    return data
+
+# ---------------- AI FALLBACK ----------------
+def ai_fallback(text, data):
+    if data["fullName"] == "N/A" and data["email"] != "N/A":
+        name_guess = data["email"].split("@")[0]
+        name_guess = re.sub(r"\d+", "", name_guess)
+        data["fullName"] = name_guess.replace(".", " ").title()
+
+    if not data["skills"]:
+        words = re.findall(r"[A-Za-z\+\#\.]+", text.lower())
+        dynamic = [w for w in words if len(w) > 2]
+        data["skills"] = list(set(dynamic[:10]))
+
+    if data["lastCompany"] == "N/A":
+        match = re.search(r"(?:at|@)\s+([A-Za-z0-9 &.,]+)", text)
+        if match:
+            data["lastCompany"] = match.group(1).strip()
 
     return data
 
-# ---------------- UNIQUE KEY (🔥 IMPORTANT) ----------------
+# ---------------- UNIQUE KEY ----------------
 def generate_unique_key(data):
     email = (data.get("email") or "").lower().strip()
     mobile = (data.get("mobile") or "").strip()
-
     key = f"{email}_{mobile}"
-    key = re.sub(r"\s+", "", key)
-
-    return key if key != "_" else None
+    return re.sub(r"\s+", "", key) if key != "_" else None
 
 # ---------------- MAIN API ----------------
 @app.post("/parse-resume")
@@ -259,17 +223,16 @@ async def parse_resume(file: UploadFile = File(...)):
     sections = split_sections(text)
 
     data = {
-        "fullName": extract_name(sections.get("header", "")) or "N/A",
+        "fullName": extract_name(sections.get("header", "")),
         "email": extract_email(text) or "N/A",
         "mobile": extract_phone(text) or "N/A",
         "location": extract_location(text) or "N/A",
-        "lastCompany": extract_company(sections.get("experience", "")) or "N/A",
+        "lastCompany": extract_company(sections.get("experience", "")),
         "skills": extract_skills(text),
     }
 
     data = clean_output(data)
-
-    # 🔥 ADD UNIQUE KEY
+    data = ai_fallback(text, data)
     data["uniqueKey"] = generate_unique_key(data)
 
     print("\n🔥 FINAL OUTPUT:\n", data)
