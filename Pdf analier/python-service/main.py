@@ -6,15 +6,25 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# ---------------- CORS ----------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or frontend URL later
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ---------------- ROOT (🔥 FIX FOR CRON) ----------------
+@app.get("/")
+def home():
+    return {"status": "Python Resume Parser Running 🚀"}
 
-# ---------------- LOAD SPACY (OPTIMIZED) ----------------
+# ---------------- HEALTH CHECK ----------------
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+# ---------------- LOAD SPACY ----------------
 nlp = spacy.load("en_core_web_sm", disable=["parser", "tagger"])
 
 # ---------------- TEXT EXTRACTION ----------------
@@ -41,10 +51,9 @@ def split_sections(text):
 
     return {k: "\n".join(v) for k, v in sections.items()}
 
-# ---------------- NAME (IMPROVED) ----------------
+# ---------------- NAME ----------------
 def extract_name(text):
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-
     blacklist = ["resume", "cv", "profile", "biodata"]
 
     for line in lines[:5]:
@@ -115,26 +124,16 @@ def extract_location(text):
         if city in text_lower:
             return city.title()
 
-    pincode_match = re.search(r"\b\d{6}\b", text)
-    if pincode_match:
+    if re.search(r"\b\d{6}\b", text):
         return "India"
 
     doc = nlp(text[:1000])
 
-    blacklist = ["node", "react", "express", "mongodb", "developer"]
-
     for ent in doc.ents:
         if ent.label_ in ["GPE", "LOC"]:
-            val = ent.text.strip().lower()
-
-            if any(b in val for b in blacklist):
-                continue
-
-            if len(val) < 3:
-                continue
-
-            if val.isalpha():
-                return ent.text.strip()
+            val = ent.text.strip()
+            if len(val) > 2 and val.isalpha():
+                return val
 
     return "N/A"
 
@@ -150,7 +149,7 @@ def extract_skills(text):
 
     return list(set([w for w in words if w in common_skills]))
 
-# ---------------- COMPANY (IMPROVED) ----------------
+# ---------------- COMPANY ----------------
 def extract_company(exp_text):
     lines = [l.strip() for l in exp_text.split("\n") if l.strip()]
 
@@ -160,68 +159,14 @@ def extract_company(exp_text):
         if any(x in lower for x in ["experience", "work", "employment"]):
             continue
 
-        match = re.search(r"(?:at|@)\s+([A-Za-z0-9 &.,]+)", line, re.IGNORECASE)
+        match = re.search(r"(?:at|@)\s+(.+)", line, re.IGNORECASE)
         if match:
             return match.group(1).strip()
 
-        if any(suffix in lower for suffix in [
-            "pvt", "ltd", "limited", "inc", "technologies", "solutions"
-        ]):
-            return line.strip()
-
-        if re.search(r"\d{4}", line):
-            continue
-
-        if len(line.split()) > 6:
-            continue
-
-        if line.startswith(("•", "-", "*")):
-            continue
-
-        if line.isupper() and 2 <= len(line.split()) <= 5:
+        if any(s in lower for s in ["pvt", "ltd", "limited", "inc"]):
             return line.strip()
 
     return "N/A"
-
-# ---------------- CLEAN OUTPUT ----------------
-def clean_output(data):
-    if data["location"]:
-        if any(x in data["location"].lower() for x in ["node", "react", "js"]):
-            data["location"] = "N/A"
-
-    if data["lastCompany"]:
-        lower = data["lastCompany"].lower()
-
-        if re.search(r"\d{4}", lower):
-            data["lastCompany"] = "N/A"
-
-    return data
-
-# ---------------- AI FALLBACK ----------------
-def ai_fallback(text, data):
-    if data["fullName"] == "N/A" and data["email"] != "N/A":
-        name_guess = data["email"].split("@")[0]
-        name_guess = re.sub(r"\d+", "", name_guess)
-        data["fullName"] = name_guess.replace(".", " ").title()
-
-    if not data["skills"]:
-        words = re.findall(r"[A-Za-z\+\#\.]+", text.lower())
-        dynamic = [w for w in words if len(w) > 2]
-        data["skills"] = list(set(dynamic[:10]))
-
-    if data["lastCompany"] == "N/A":
-        match = re.search(r"(?:at|@)\s+([A-Za-z0-9 &.,]+)", text)
-        if match:
-            data["lastCompany"] = match.group(1).strip()
-
-    return data
-
-# ---------------- UNIQUE KEY ----------------
-def generate_unique_key(data):
-    email = (data.get("email") or "").lower().strip()
-    mobile = (data.get("mobile") or "").strip()
-    key = f"{email}_{mobile}"
-    return re.sub(r"\s+", "", key) if key != "_" else None
 
 # ---------------- MAIN API ----------------
 @app.post("/parse-resume")
@@ -239,10 +184,6 @@ async def parse_resume(file: UploadFile = File(...)):
         "lastCompany": extract_company(sections.get("experience", "")),
         "skills": extract_skills(text),
     }
-
-    data = clean_output(data)
-    data = ai_fallback(text, data)
-    data["uniqueKey"] = generate_unique_key(data)
 
     print("\n🔥 FINAL OUTPUT:\n", data)
 
