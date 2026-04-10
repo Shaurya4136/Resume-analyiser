@@ -6,7 +6,10 @@ import FormData from "form-data";
 import Resume from "../models/Resume.js";
 import { saveToGoogleSheet } from "../utils/googleSheet.js";
 
-// ---------------- NORMALIZE (🔥 KEY FIX) ----------------
+// ---------------- CONFIG ----------------
+const PYTHON_API = process.env.PYTHON_API_URL; // base URL only
+
+// ---------------- NORMALIZE ----------------
 const normalize = (str) =>
   (str || "")
     .toString()
@@ -64,7 +67,7 @@ export const handleUpload = async (req, res) => {
 
           text = cleanText(text);
 
-          // 🤖 Python API
+          // 🤖 Prepare Python API request
           const formData = new FormData();
           formData.append("file", fs.createReadStream(file.path));
 
@@ -72,11 +75,11 @@ export const handleUpload = async (req, res) => {
 
           try {
             const response = await axios.post(
-              process.env.PYTHON_API_URL,
+              `${PYTHON_API}/parse-resume`, // ✅ FIXED HERE
               formData,
               {
                 headers: formData.getHeaders(),
-                timeout: 15000,
+                timeout: 20000,
               }
             );
 
@@ -86,7 +89,7 @@ export const handleUpload = async (req, res) => {
             console.log("⚠️ Python API failed:", err.message);
           }
 
-          // 🔁 Fallback
+          // 🔁 Fallback regex
           const regexData = extractBasic(text);
 
           const merged = {
@@ -128,7 +131,7 @@ export const handleUpload = async (req, res) => {
     );
 
     // ================================
-    // ✅ SAVE TO MONGODB (NO DUPLICATES + SAFE)
+    // ✅ SAVE TO MONGODB (NO DUPLICATES)
     // ================================
     for (const r of results) {
 
@@ -163,7 +166,6 @@ export const handleUpload = async (req, res) => {
 
       } catch (err) {
 
-        // 🔥 HANDLE DUPLICATE ERROR (E11000)
         if (err.code === 11000) {
           console.log("⚠️ Duplicate skipped:", mobile || email);
           continue;
