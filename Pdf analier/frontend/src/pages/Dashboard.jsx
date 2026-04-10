@@ -10,7 +10,7 @@ export default function Dashboard() {
     const fetchData = async () => {
       try {
         const res = await axios.get(
-          "http://localhost:5000/api/dashboard/resumes"
+          "https://resume-analyiser-backend.onrender.com/api/dashboard/resumes"
         );
         console.log("📊 Dashboard Data:", res.data);
         setData(res.data);

@@ -2,8 +2,17 @@ from fastapi import FastAPI, UploadFile, File
 import re
 import fitz
 import spacy
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or frontend URL later
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ---------------- LOAD SPACY (OPTIMIZED) ----------------
 nlp = spacy.load("en_core_web_sm", disable=["parser", "tagger"])

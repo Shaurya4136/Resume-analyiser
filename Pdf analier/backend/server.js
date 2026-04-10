@@ -10,10 +10,14 @@ dotenv.config();
 
 const app = express();
 
-// ---------------- MIDDLEWARE ----------------
-app.use(cors());
+// ---------------- CORS (CORRECT) ----------------
+app.use(cors({
+  origin: "*", // later replace with frontend URL
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
 
-// ⚠️ Important for file uploads (PDFs)
+// ---------------- BODY PARSER ----------------
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 

@@ -26,7 +26,7 @@ export default function Upload3D({ setData }) {
       });
 
       const res = await axios.post(
-        "http://localhost:5000/api/upload",
+        "https://resume-analyiser-backend.onrender.com/api/upload",
         formData,
         {
           headers: {
