@@ -6,15 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# ---------------- CORS ----------------
+# ---------------- CORS (PRODUCTION SAFE) ----------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # later you can restrict
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------- HEALTH ----------------
+# ---------------- HEALTH ROUTES ----------------
 @app.get("/")
 def home():
     return {"status": "Resume Parser Running 🚀"}
@@ -23,15 +23,19 @@ def home():
 def health():
     return {"status": "healthy"}
 
-# ---------------- LOAD MODEL ----------------
-nlp = spacy.load("en_core_web_sm", disable=["parser", "tagger"])
+# ---------------- LOAD SPACY (SAFE) ----------------
+try:
+    nlp = spacy.load("en_core_web_sm", disable=["parser", "tagger"])
+except Exception as e:
+    print("❌ spaCy failed to load:", e)
+    nlp = None  # prevents crash
 
 # ---------------- TEXT EXTRACTION ----------------
 def extract_text(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     return "\n".join([page.get_text() for page in doc])
 
-# ---------------- SPLIT ----------------
+# ---------------- SECTION SPLITTER ----------------
 def split_sections(text):
     sections = {"header": []}
     current = "header"
@@ -41,109 +45,197 @@ def split_sections(text):
 
         if "skill" in l:
             current = "skills"
-        elif "experience" in l or "employment" in l:
+        elif "experience" in l or "employment" in l or "work" in l:
             current = "experience"
-        elif "education" in l:
+        elif "education" in l or "qualification" in l:
             current = "education"
 
         sections.setdefault(current, []).append(line)
 
     return {k: "\n".join(v) for k, v in sections.items()}
 
+# ---------------- NAME ----------------
+def extract_name(text):
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return None
+
+    first = lines[0]
+
+    if len(first.split()) <= 4 and not any(c.isdigit() for c in first):
+        return first.strip().title()
+
+    if nlp:
+        doc = nlp(text[:500])
+        for ent in doc.ents:
+            if ent.label_ == "PERSON":
+                return ent.text.strip()
+
+    return None
+
 # ---------------- EMAIL ----------------
 def extract_email(text):
-    emails = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
-    return emails[0].lower() if emails else "N/A"
+    text = re.sub(r"\s*@\s*", "@", text)
+    text = re.sub(r"\s*\.\s*", ".", text)
+    text = text.replace("\n", " ").replace("\t", " ")
+
+    emails = re.findall(
+        r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
+        text
+    )
+
+    if not emails:
+        return None
+
+    clean_emails = list(set([e.lower().strip() for e in emails]))
+
+    for email in clean_emails:
+        if not any(x in email for x in ["noreply", "example", "test"]):
+            return email
+
+    return clean_emails[0]
 
 # ---------------- PHONE ----------------
 def extract_phone(text):
     match = re.search(r"(\+?\d[\d\s\-]{8,15})", text)
+
     if not match:
-        return "N/A"
+        return None
 
-    phone = re.sub(r"\D", "", match.group())
-    return phone[-10:]
+    phone = match.group(0)
+    phone = re.sub(r"\D", "", phone)
 
-# ---------------- NAME (🔥 99% ACCURATE) ----------------
-def extract_name(text):
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if phone.startswith("91") and len(phone) > 10:
+        phone = phone[-10:]
 
-    blacklist = [
-        "resume","cv","profile","biodata",
-        "developer","engineer","marketing","manager",
-        "analyst","intern","consultant","specialist",
-        "skills","experience","education"
-    ]
-
-    # Rule-based
-    for line in lines[:15]:
-        words = line.split()
-
-        if (
-            2 <= len(words) <= 4 and
-            not any(char.isdigit() for char in line) and
-            not any(b in line.lower() for b in blacklist) and
-            all(w[0].isupper() for w in words if w.isalpha())
-        ):
-            return line.strip()
-
-    # Email fallback
-    email = extract_email(text)
-    if email != "N/A":
-        name_guess = email.split("@")[0]
-        name_guess = re.sub(r"\d+", "", name_guess)
-        name_guess = name_guess.replace(".", " ").title()
-        if 2 <= len(name_guess.split()) <= 4:
-            return name_guess
-
-    # spaCy fallback
-    doc = nlp(text[:1200])
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            return ent.text.strip()
-
-    return "N/A"
+    return phone
 
 # ---------------- LOCATION ----------------
 def extract_location(text):
-    cities = ["delhi","mumbai","pune","bangalore","hyderabad","chennai","kolkata","noida","gurgaon"]
 
-    for city in cities:
-        if city in text.lower():
+    text_lower = text.lower()
+
+    indian_cities = [
+        "delhi","new delhi","mumbai","pune","bangalore","bengaluru",
+        "hyderabad","chennai","kolkata","ahmedabad","jaipur","lucknow",
+        "kanpur","nagpur","indore","bhopal","patna","surat","agra",
+        "noida","gurgaon","gurugram","faridabad","ghaziabad",
+        "chandigarh","coimbatore","kochi","trivandrum","vizag",
+        "visakhapatnam","madurai","varanasi","meerut","ranchi"
+    ]
+
+    for city in indian_cities:
+        if city in text_lower:
             return city.title()
 
-    doc = nlp(text[:1000])
-    for ent in doc.ents:
-        if ent.label_ in ["GPE", "LOC"]:
-            return ent.text.strip()
+    pincode_match = re.search(r"\b\d{6}\b", text)
+    if pincode_match:
+        return "India"
+
+    if nlp:
+        doc = nlp(text[:1000])
+
+        blacklist = [
+            "node", "react", "express", "mongodb",
+            "developer", "engineer", "javascript"
+        ]
+
+        for ent in doc.ents:
+            if ent.label_ in ["GPE", "LOC"]:
+                val = ent.text.strip().lower()
+
+                if any(b in val for b in blacklist):
+                    continue
+
+                if ".js" in val:
+                    continue
+
+                if len(val) < 3:
+                    continue
+
+                if val.isalpha():
+                    return ent.text.strip()
 
     return "N/A"
 
 # ---------------- SKILLS ----------------
 def extract_skills(text):
-    skills_db = [
-        "python","java","c++","javascript","react","node","mongodb",
-        "html","css","bootstrap","tailwind","sql",
-        "excel","seo","marketing","sales","communication"
+    words = re.findall(r"[A-Za-z\+\#\.]+", text.lower())
+
+    common_skills = [
+        "communication","sales","marketing","seo","excel","word",
+        "python","java","c++","javascript","react","node",
+        "management","leadership","analysis","customer","support"
     ]
 
-    text_lower = text.lower()
-    return list(set([s for s in skills_db if s in text_lower]))
+    return list(set([w for w in words if w in common_skills]))
 
 # ---------------- COMPANY ----------------
-def extract_company(text):
-    lines = text.split("\n")
+def extract_company(exp_text):
+    lines = [l.strip() for l in exp_text.split("\n") if l.strip()]
 
     for line in lines:
-        if " at " in line.lower():
-            return line.split("at")[-1].strip()
+        lower = line.lower()
 
-        if any(k in line.lower() for k in ["ltd","pvt","inc","technologies","solutions"]):
+        if any(x in lower for x in ["experience", "work", "employment"]):
+            continue
+
+        if re.search(r"\d{4}", line):
+            continue
+
+        if any(month in lower for month in [
+            "jan","feb","mar","apr","may","jun",
+            "jul","aug","sep","oct","nov","dec"
+        ]):
+            continue
+
+        if len(line.split()) > 6:
+            continue
+
+        if line.startswith("-") or line.startswith("•"):
+            continue
+
+        match = re.search(r"at\s+(.+)", line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+        if any(c.isupper() for c in line):
             return line.strip()
 
-    return "N/A"
+    return None
 
-# ---------------- MAIN ----------------
+# ---------------- CLEAN OUTPUT ----------------
+def clean_output(data):
+
+    if data["location"]:
+        if any(x in data["location"].lower() for x in ["node", "react", "express", "js"]):
+            data["location"] = "N/A"
+
+    if data["lastCompany"]:
+        lower = data["lastCompany"].lower()
+
+        if re.search(r"\d{4}", lower):
+            data["lastCompany"] = "N/A"
+
+        if any(month in lower for month in [
+            "jan","feb","mar","apr","may","jun",
+            "jul","aug","sep","oct","nov","dec"
+        ]):
+            data["lastCompany"] = "N/A"
+
+    return data
+
+# ---------------- UNIQUE KEY ----------------
+def generate_unique_key(data):
+    email = (data.get("email") or "").lower().strip()
+    mobile = (data.get("mobile") or "").strip()
+
+    key = f"{email}_{mobile}"
+    key = re.sub(r"\s+", "", key)
+
+    return key if key != "_" else None
+
+# ---------------- MAIN API ----------------
 @app.post("/parse-resume")
 async def parse_resume(file: UploadFile = File(...)):
     content = await file.read()
@@ -152,13 +244,16 @@ async def parse_resume(file: UploadFile = File(...)):
     sections = split_sections(text)
 
     data = {
-        "fullName": extract_name(text),
-        "email": extract_email(text),
-        "mobile": extract_phone(text),
-        "location": extract_location(text),
-        "lastCompany": extract_company(sections.get("experience", "")),
+        "fullName": extract_name(sections.get("header", "")) or "N/A",
+        "email": extract_email(text) or "N/A",
+        "mobile": extract_phone(text) or "N/A",
+        "location": extract_location(text) or "N/A",
+        "lastCompany": extract_company(sections.get("experience", "")) or "N/A",
         "skills": extract_skills(text),
     }
+
+    data = clean_output(data)
+    data["uniqueKey"] = generate_unique_key(data)
 
     print("\n🔥 FINAL OUTPUT:\n", data)
 
